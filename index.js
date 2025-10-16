@@ -8,10 +8,10 @@ const cron = require('node-cron');
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
 // Substitua pelo seu token
-const TOKEN = 'MTQyODIxMDYzMjM2NDM5MjYxOA.GDtPCN.TTqcbvSwAwwiBbtRVczsrY73U9c59DZlLkqJnw';
+const TOKEN = 'SEU_TOKEN_AQUI';
 
 //Filtrar canal
-const ID_CANAL_LOGS = '1428187842432995539'; // substitua pelo ID do canal onde os logs são enviados
+const ID_CANAL_LOGS = ' '; // substitua pelo ID do canal onde os logs são enviados
 
 client.on('messageCreate', msg => {
   // filtra apenas o canal desejado
@@ -20,12 +20,8 @@ client.on('messageCreate', msg => {
   processarMensagem(msg);
 });
 
-
-
-
-
 //Canal de report
-const ID_CANAL_REPORT = '1428222155690344529';
+const ID_CANAL_REPORT = ''; // substitua pelo ID do canal onde os relatórios serão enviados
 
 // Estrutura de armazenamento temporário (pode depois usar JSON ou DB)
 let registros = {};
@@ -82,7 +78,9 @@ cron.schedule('0 9 * * 5', async () => {
         horasTotais += calcularHoras(r.data, r.entrada, r.saida);
       }
     });
-    await canal.send(`${registros[id][0].nome} trabalhou ${horasTotais.toFixed(2)}h nos últimos 7 dias. ${horasTotais >= 7 ? '✅ Meta cumprida' : '❌ Meta não atingida'}`);
+    await canal.send(
+      `${registros[id][0].nome} | ${id} trabalhou ${horasTotais.toFixed(2)}h nos últimos 7 dias. ${horasTotais >= 7 ? '✅ Meta cumprida' : '❌ Meta não atingida'}`
+    );
   }
 });
 
