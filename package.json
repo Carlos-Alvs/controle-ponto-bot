@@ -1,0 +1,17 @@
+{
+  "name": "controle-ponto-bot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dayjs": "^1.11.18",
+    "discord.js": "^14.23.2",
+    "node-cron": "^4.2.1"
+  }
+}
