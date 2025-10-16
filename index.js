@@ -5,13 +5,20 @@ dayjs.extend(customParseFormat);
 
 const cron = require('node-cron');
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
+const client = new Client({ 
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers
+  ]
+});
 
 // Substitua pelo seu token
-const TOKEN = 'SEU_TOKEN_AQUI';
+const TOKEN = '';
 
 //Filtrar canal
-const ID_CANAL_LOGS = ' '; // substitua pelo ID do canal onde os logs são enviados
+const ID_CANAL_LOGS = '1428192874595356762'; // substitua pelo ID do canal onde os logs são enviados
 
 client.on('messageCreate', msg => {
   // filtra apenas o canal desejado
@@ -21,7 +28,7 @@ client.on('messageCreate', msg => {
 });
 
 //Canal de report
-const ID_CANAL_REPORT = ''; // substitua pelo ID do canal onde os relatórios serão enviados
+const ID_CANAL_REPORT = '1428192874595356766'; // substitua pelo ID do canal onde os relatórios serão enviados
 
 // Estrutura de armazenamento temporário (pode depois usar JSON ou DB)
 let registros = {};
@@ -65,11 +72,15 @@ function calcularHoras(data, entrada, saida) {
 }
 
 // Cron para sexta-feira às 09:00 '0 9 * * 5'    -> teste minuto> '0 * * * * *'
-cron.schedule('0 9 * * 5', async () => {
+cron.schedule('0 * * * * *', async () => {
   const canal = await client.channels.fetch(ID_CANAL_REPORT);
   const hoje = dayjs();
   const seteDias = hoje.subtract(7, 'day');
 
+  // Cabeçalho com intervalo de datas
+  let relatorio = `📊 Relatório de metas semana do dia ${seteDias.format('DD/MM')} a ${hoje.format('DD/MM')}\n\n`;
+
+  // Loop de registros acumulando tudo em uma string
   for (const id in registros) {
     let horasTotais = 0;
     registros[id].forEach(r => {
@@ -78,15 +89,29 @@ cron.schedule('0 9 * * 5', async () => {
         horasTotais += calcularHoras(r.data, r.entrada, r.saida);
       }
     });
-    await canal.send(
-      `${registros[id][0].nome} | ${id} trabalhou ${horasTotais.toFixed(2)}h nos últimos 7 dias. ${horasTotais >= 7 ? '✅ Meta cumprida' : '❌ Meta não atingida'}`
-    );
+
+    relatorio += `${registros[id][0].nome} | ${id} trabalhou ${horasTotais.toFixed(2)}h nos últimos 7 dias. ${horasTotais >= 7 ? '✅ Meta cumprida' : '❌ Meta não atingida'}\n`;
   }
+
+  // Envia tudo de uma vez
+  await canal.send(relatorio);
 });
 
 // Captura mensagens do canal
 client.on('messageCreate', msg => {
   processarMensagem(msg);
 });
+
+// Verifica se o bot está online e tem acesso ao canal
+client.once('ready', async () => {
+  console.log(`Bot online como ${client.user.tag}`);
+  try {
+    const canal = await client.channels.fetch(ID_CANAL_REPORT);
+    await canal.send('✅ Bot conectado e com acesso ao canal de report!');
+  } catch (err) {
+    console.error('❌ Erro ao acessar o canal:', err);
+  }
+});
+
 
 client.login(TOKEN);
