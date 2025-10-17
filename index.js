@@ -1,117 +1,167 @@
-const { Client, GatewayIntentBits } = require('discord.js');
-const dayjs = require('dayjs');
-const customParseFormat = require('dayjs/plugin/customParseFormat');
-dayjs.extend(customParseFormat);
-
+const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
 const cron = require('node-cron');
+const fs = require('fs');
+const path = require('path');
+require('dotenv').config();
 
-const client = new Client({ 
+const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers
-  ]
+    GatewayIntentBits.MessageContent // necessário para ler o texto das mensagens
+  ],
 });
 
-// Substitua pelo seu token
-const TOKEN = '';
+const TOKEN = process.env.DISCORD_TOKEN;
+const CHANNEL_ID_RECEIVE = process.env.CHANNEL_ID_RECEIVE; // canal onde o bot lê os logs
+const CHANNEL_ID_REPORT = process.env.CHANNEL_ID_REPORT;   // canal onde o bot envia relatórios
+const GUILD_ID = process.env.DISCORD_GUILD_ID;
+const CLIENT_ID = process.env.CLIENT_ID;
+const META_SEMANAL = 7; // Meta semanal em horas
 
-//Filtrar canal
-const ID_CANAL_LOGS = '1428192874595356762'; // substitua pelo ID do canal onde os logs são enviados
-
-client.on('messageCreate', msg => {
-  // filtra apenas o canal desejado
-  if (msg.channel.id !== ID_CANAL_LOGS) return;
-
-  processarMensagem(msg);
-});
-
-//Canal de report
-const ID_CANAL_REPORT = '1428192874595356766'; // substitua pelo ID do canal onde os relatórios serão enviados
-
-// Estrutura de armazenamento temporário (pode depois usar JSON ou DB)
-let registros = {};
-
-client.once('ready', () => {
-  console.log(`Bot online como ${client.user.tag}`);
-});
-
-
-
-// Função para processar logs
-function processarMensagem(mensagem) {
-  // Exemplo: 🕘 Julio Cesar (425) => Data: 26/4/2025 | ENTRADA: 19:46:11
-  const regex = /🕘 (.+) \((\d+)\) => Data: (\d{1,2}\/\d{1,2}\/\d{4}) \| (ENTRADA|SAIDA): (\d{2}:\d{2}:\d{2})/;
-  const match = mensagem.content.match(regex);
-  if (!match) return;
-
-  const [_, nome, id, data, tipo, hora] = match;
-
-  if (!registros[id]) registros[id] = [];
-  let registroDia = registros[id].find(r => r.data === data);
-  if (!registroDia) registroDia = { data, entrada: null, saida: null, nome };
-  
-  if (tipo === 'ENTRADA') registroDia.entrada = hora;
-  else registroDia.saida = hora;
-
-  // Atualiza
-  const index = registros[id].findIndex(r => r.data === data);
-  if (index !== -1) registros[id][index] = registroDia;
-  else registros[id].push(registroDia);
+// utils
+function timeToMinutes(timeStr) {
+  const [h, m, s] = timeStr.split(':').map(Number);
+  return h * 60 + m + (s ? s / 60 : 0);
 }
 
-// Função para calcular horas
-function calcularHoras(data, entrada, saida) {
-  if (!entrada || !saida) return 0;
+function calcularHorasSemanais(logs, dataInicio, dataFim) {
+  const usuarios = {};
 
-  const inicio = dayjs(`${data} ${entrada}`, 'D/M/YYYY HH:mm:ss');
-  const fim = dayjs(`${data} ${saida}`, 'D/M/YYYY HH:mm:ss');
+  logs.forEach((log) => {
+    const match = log.match(/🕘 (.+) \((\d+)\) => Data: (\d{1,2}\/\d{1,2}\/\d{4}) \| (ENTRADA|SAIDA): (\d{2}:\d{2}:\d{2})/);
+    if (!match) return;
 
-  return fim.diff(inicio, 'minute') / 60; // horas
-}
+    const [, nome, id, data, tipo, hora] = match;
+    const key = `${nome}|${id}`;
+    if (!usuarios[key]) usuarios[key] = [];
+    usuarios[key].push({ data, tipo, hora });
+  });
 
-// Cron para sexta-feira às 09:00 '0 9 * * 5'    -> teste minuto> '0 * * * * *'
-cron.schedule('0 * * * * *', async () => {
-  const canal = await client.channels.fetch(ID_CANAL_REPORT);
-  const hoje = dayjs();
-  const seteDias = hoje.subtract(7, 'day');
+  const resultados = [];
 
-  // Cabeçalho com intervalo de datas
-  let relatorio = `📊 Relatório de metas semana do dia ${seteDias.format('DD/MM')} a ${hoje.format('DD/MM')}\n\n`;
+  for (const key in usuarios) {
+    const [nome, id] = key.split('|');
+    const registros = usuarios[key].sort(
+      (a, b) =>
+        new Date(a.data.split('/').reverse().join('-')) - new Date(b.data.split('/').reverse().join('-')) ||
+        timeToMinutes(a.hora) - timeToMinutes(b.hora)
+    );
 
-  // Loop de registros acumulando tudo em uma string
-  for (const id in registros) {
-    let horasTotais = 0;
-    registros[id].forEach(r => {
-      const dataRegistro = dayjs(r.data, 'D/M/YYYY');
-      if (dataRegistro.isAfter(seteDias)) {
-        horasTotais += calcularHoras(r.data, r.entrada, r.saida);
+    let totalMinutos = 0;
+    for (let i = 0; i < registros.length - 1; i++) {
+      const atual = registros[i];
+      const proximo = registros[i + 1];
+
+      if (atual.tipo === 'ENTRADA' && proximo.tipo === 'SAIDA') {
+        let entrada = timeToMinutes(atual.hora);
+        let saida = timeToMinutes(proximo.hora);
+        if (saida < entrada) saida += 24 * 60; // virada de dia
+        totalMinutos += saida - entrada;
+        i++; // pulamos o próximo porque já emparelhamos
       }
-    });
+    }
 
-    relatorio += `${registros[id][0].nome} | ${id} trabalhou ${horasTotais.toFixed(2)}h nos últimos 7 dias. ${horasTotais >= 7 ? '✅ Meta cumprida' : '❌ Meta não atingida'}\n`;
+    const horas = (totalMinutos / 60).toFixed(2);
+    const metaCumprida = horas >= META_SEMANAL ? '✅ Meta cumprida' : '❌ Meta não atingida';
+    resultados.push(`${nome} | ${id} trabalhou ${horas}h nos últimos 7 dias. ${metaCumprida}`);
   }
 
-  // Envia tudo de uma vez
-  await canal.send(relatorio);
-});
+  const inicioFormatado = dataInicio.toLocaleDateString('pt-BR');
+  const fimFormatado = dataFim.toLocaleDateString('pt-BR');
+  return [`Relatório de metas semana do dia ${inicioFormatado} a ${fimFormatado}`, ...resultados].join('\n');
+}
 
-// Captura mensagens do canal
-client.on('messageCreate', msg => {
-  processarMensagem(msg);
-});
+async function gerarRelatorio(channel) {
+  const logsPath = path.join(process.cwd(), 'logs.txt');
+  if (!fs.existsSync(logsPath)) return channel.send('❌ Nenhum log encontrado.');
 
-// Verifica se o bot está online e tem acesso ao canal
-client.once('ready', async () => {
-  console.log(`Bot online como ${client.user.tag}`);
+  const conteudo = fs.readFileSync(logsPath, 'utf-8').split('\n').filter(Boolean);
+  const agora = new Date();
+  const dataFim = agora;
+  const dataInicio = new Date();
+  dataInicio.setDate(dataFim.getDate() - 7);
+
+  const relatorio = calcularHorasSemanais(conteudo, dataInicio, dataFim);
+
+  // envia tudo em uma única mensagem
+  await channel.send('```' + relatorio + '```');
+}
+
+// --- Slash Command /relatorio ---
+const commands = [
+  {
+    name: 'relatorio',
+    description: 'Gera manualmente o relatório semanal de metas.',
+  },
+];
+
+const rest = new REST({ version: '10' }).setToken(TOKEN);
+
+async function registrarComandos() {
   try {
-    const canal = await client.channels.fetch(ID_CANAL_REPORT);
-    await canal.send('✅ Bot conectado e com acesso ao canal de report!');
+    await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
+    console.log('✅ Comando /relatorio registrado.');
+  } catch (error) {
+    console.error('Erro ao registrar comandos:', error);
+  }
+}
+
+// --- Cron Job semanal (// Cron sexta 09:00 '0 9 * * 5' -> sabado 23:00 '0 23 * * 6' -> teste minuto> '0 * * * * *') ---
+cron.schedule('0 23 * * 6', async () => {
+  try {
+    const channel = await client.channels.fetch(CHANNEL_ID_REPORT);
+    await gerarRelatorio(channel);
   } catch (err) {
-    console.error('❌ Erro ao acessar o canal:', err);
+    console.error('[CRON ERROR]', err);
   }
 });
 
+// --- Listener para o comando /relatorio ---
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isCommand()) return;
+  if (interaction.commandName === 'relatorio') {
+    await interaction.reply('🕒 Gerando relatório, aguarde...');
+    const channel = await client.channels.fetch(CHANNEL_ID_REPORT);
+    await gerarRelatorio(channel);
+  }
+});
+
+// --- Listener para receber logs no canal especificado ---
+client.on('messageCreate', async (msg) => {
+  try {
+    // ignora bots (inclusive o próprio)
+    if (msg.author?.bot) return;
+
+    // filtra só o canal de logs
+    if (!CHANNEL_ID_RECEIVE || msg.channel.id !== CHANNEL_ID_RECEIVE) return;
+
+    const texto = msg.content.trim();
+
+    // valida o formato antes de gravar (evita lixo no arquivo)
+    const regex = /🕘 (.+) \((\d+)\) => Data: (\d{1,2}\/\d{1,2}\/\d{4}) \| (ENTRADA|SAIDA): (\d{2}:\d{2}:\d{2})/;
+    if (!regex.test(texto)) {
+      // opcional: reaja para avisar formato inválido
+      // await msg.react('⚠️');
+      return;
+    }
+
+    // grava no logs.txt — append com nova linha
+    const logsPath = path.join(process.cwd(), 'logs.txt');
+    fs.appendFileSync(logsPath, texto + '\n', { encoding: 'utf8' });
+
+    // opcional: confirma no próprio canal (descomente se quiser confirmação)
+    // await msg.react('✅');
+
+    console.log('Log gravado:', texto);
+  } catch (err) {
+    console.error('Erro ao processar mensagem de log:', err);
+  }
+});
+
+client.once('ready', async () => {
+  console.log(`🤖 Bot online como ${client.user.tag}`);
+  await registrarComandos();
+});
 
 client.login(TOKEN);
