@@ -164,4 +164,21 @@ client.once('ready', async () => {
   await registrarComandos();
 });
 
+
+const express = require('express');
+const app = express();
+
+app.get('/', (req, res) => res.send('Bot online!'));
+app.listen(3000, () => console.log('🌐 Servidor Express ativo'));
+
+const pingTimer = require('node-cron');
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+
+// A cada 5 minutos, faz um ping em si mesmo para evitar hibernação
+pingTimer.schedule('*/5 * * * *', () => {
+  fetch('https://controle-ponto-bot.onrender.com').catch(() => {});
+
+
+
+
 client.login(TOKEN);

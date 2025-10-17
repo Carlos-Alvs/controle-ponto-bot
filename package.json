@@ -13,6 +13,7 @@
   "dependencies": {
     "dayjs": "^1.11.18",
     "discord.js": "^14.23.2",
+    "dotenv": "^17.2.3",
     "node-cron": "^4.2.1"
   }
 }
