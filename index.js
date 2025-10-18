@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
+// --- Configurações principais ---
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -18,19 +19,23 @@ const CHANNEL_ID_REPORT = process.env.CHANNEL_ID_REPORT;
 const GUILD_ID = process.env.DISCORD_GUILD_ID;
 const CLIENT_ID = process.env.CLIENT_ID;
 const META_SEMANAL = 7; // Meta semanal em horas
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const GIST_ID = process.env.GIST_ID;
 
-// Utilitário
+// --- Dependência dinâmica ---
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+
+// --- Utilitário ---
 function timeToMinutes(timeStr) {
   const [h, m, s] = timeStr.split(':').map(Number);
   return (h || 0) * 60 + (m || 0) + ((s || 0) / 60);
 }
 
-// Calcula horas semanais
+// --- Cálculo das horas semanais ---
 function calcularHorasSemanais(logs, dataInicio, dataFim) {
   const usuarios = {};
 
   logs.forEach((log) => {
-    // Aceita horas com 1 ou 2 dígitos
     const match = log.match(/🕘 (.+) \((\d+)\) => Data: (\d{1,2}\/\d{1,2}\/\d{4}) \| (ENTRADA|SAIDA): (\d{1,2}:\d{1,2}:\d{1,2})/);
     if (!match) return;
 
@@ -41,7 +46,7 @@ function calcularHorasSemanais(logs, dataInicio, dataFim) {
   });
 
   const resultados = [];
-  const agora = new Date(); // usado para fechar ponto aberto
+  const agora = new Date();
 
   for (const key in usuarios) {
     const [nome, id] = key.split('|');
@@ -64,9 +69,8 @@ function calcularHorasSemanais(logs, dataInicio, dataFim) {
 
         if (proximo && proximo.tipo === 'SAIDA') {
           saida = timeToMinutes(proximo.hora);
-          i++; // pula o par
+          i++;
         } else {
-          // Se não houver SAIDA correspondente, usa hora atual
           const horaAgora = agora.getHours().toString().padStart(2, '0') + ':' +
             agora.getMinutes().toString().padStart(2, '0') + ':' +
             agora.getSeconds().toString().padStart(2, '0');
@@ -74,7 +78,7 @@ function calcularHorasSemanais(logs, dataInicio, dataFim) {
           emServico = true;
         }
 
-        if (saida < entrada) saida += 24 * 60; // virada de dia
+        if (saida < entrada) saida += 24 * 60;
         totalMinutos += saida - entrada;
       }
     }
@@ -90,12 +94,48 @@ function calcularHorasSemanais(logs, dataInicio, dataFim) {
   return [`Relatório de metas semana do dia ${inicioFormatado} a ${fimFormatado}`, ...resultados].join('\n');
 }
 
-// Gera o relatório
-async function gerarRelatorio(channel) {
-  const logsPath = path.join(process.cwd(), 'logs.txt');
-  if (!fs.existsSync(logsPath)) return channel.send('❌ Nenhum log encontrado.');
+// --- Leitura de logs (Gist) ---
+async function obterLogsDoGist() {
+  try {
+    const resp = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+      headers: { Authorization: `Bearer ${GITHUB_TOKEN}` }
+    });
+    const data = await resp.json();
+    return data.files['logs.txt']?.content?.split('\n').filter(Boolean) || [];
+  } catch (err) {
+    console.error('⚠️ Falha ao ler Gist:', err);
+    return [];
+  }
+}
 
-  const conteudo = fs.readFileSync(logsPath, 'utf-8').split('\n').filter(Boolean);
+// --- Atualização do Gist ---
+async function atualizarGist(novaLinha) {
+  try {
+    const atual = await obterLogsDoGist();
+    const atualizado = [...atual, novaLinha].join('\n');
+
+    await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        files: { 'logs.txt': { content: atualizado } }
+      })
+    });
+
+    console.log('☁️ Log sincronizado no Gist:', novaLinha);
+  } catch (err) {
+    console.error('❌ Erro ao atualizar Gist:', err);
+  }
+}
+
+// --- Geração de relatório ---
+async function gerarRelatorio(channel) {
+  const conteudo = await obterLogsDoGist();
+  if (!conteudo.length) return channel.send('❌ Nenhum log encontrado no Gist.');
+
   const agora = new Date();
   const dataFim = agora;
   const dataInicio = new Date();
@@ -105,14 +145,8 @@ async function gerarRelatorio(channel) {
   await channel.send('```' + relatorio + '```');
 }
 
-// Slash Command /relatorio
-const commands = [
-  {
-    name: 'relatorio',
-    description: 'Gera manualmente o relatório semanal de metas.',
-  },
-];
-
+// --- Slash Command ---
+const commands = [{ name: 'relatorio', description: 'Gera manualmente o relatório semanal de metas.' }];
 const rest = new REST({ version: '10' }).setToken(TOKEN);
 
 async function registrarComandos() {
@@ -124,7 +158,7 @@ async function registrarComandos() {
   }
 }
 
-// Cron (sábado 23:00)
+// --- Cron semanal (sábado 23h) ---
 cron.schedule('0 23 * * 6', async () => {
   try {
     const channel = await client.channels.fetch(CHANNEL_ID_REPORT);
@@ -134,77 +168,68 @@ cron.schedule('0 23 * * 6', async () => {
   }
 });
 
-// Listener para /relatorio
+// --- Comando manual /relatorio ---
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isCommand()) return;
   if (interaction.commandName === 'relatorio') {
-    await interaction.deferReply();
-    await interaction.editReply('🕒 Gerando relatório, aguarde...');
-    const channel = await client.channels.fetch(CHANNEL_ID_REPORT);
-    await gerarRelatorio(channel);
+    try {
+      await interaction.deferReply({ ephemeral: false });
+      const channel = await client.channels.fetch(CHANNEL_ID_REPORT);
+      const conteudo = await obterLogsDoGist();
+
+      if (!conteudo.length) {
+        await interaction.editReply('❌ Nenhum log encontrado no Gist.');
+        return;
+      }
+
+      const agora = new Date();
+      const dataFim = agora;
+      const dataInicio = new Date();
+      dataInicio.setDate(dataFim.getDate() - 7);
+
+      const relatorio = calcularHorasSemanais(conteudo, dataInicio, dataFim);
+      await interaction.editReply('```' + relatorio + '```');
+    } catch (err) {
+      console.error('Erro ao gerar relatório:', err);
+      if (interaction.deferred || interaction.replied)
+        await interaction.editReply('❌ Ocorreu um erro ao gerar o relatório.');
+      else
+        await interaction.reply('❌ Ocorreu um erro ao gerar o relatório.');
+    }
   }
 });
 
-// Recebe logs do canal
-// Recebe logs do canal
+// --- Recebe logs do canal e envia pro Gist ---
 client.on('messageCreate', async (msg) => {
   try {
-    // ignora bots (inclusive o próprio)
     if (msg.author?.bot) return;
-
-    // filtra apenas o canal de logs
     if (!CHANNEL_ID_RECEIVE || msg.channel.id !== CHANNEL_ID_RECEIVE) return;
 
     const texto = msg.content.trim();
-
-    // valida o formato antes de gravar (evita lixo no arquivo)
-    const regex =
-      /🕘 (.+) \((\d+)\) => Data: (\d{1,2}\/\d{1,2}\/\d{4}) \| (ENTRADA|SAIDA): (\d{1,2}:\d{1,2}:\d{1,2})/;
+    const regex = /🕘 (.+) \((\d+)\) => Data: (\d{1,2}\/\d{1,2}\/\d{4}) \| (ENTRADA|SAIDA): (\d{1,2}:\d{1,2}:\d{1,2})/;
     if (!regex.test(texto)) return;
 
-    // 🧩 caminho compatível com Render e local
-    let logsPath = path.join(process.cwd(), 'logs.txt'); // padrão local
-    try {
-      // tenta gravar no diretório padrão (Render pode travar)
-      fs.appendFileSync(logsPath, texto + '\n', { encoding: 'utf8' });
-    } catch (err1) {
-      try {
-        // fallback: /tmp (Render Free Tier grava aqui)
-        logsPath = '/tmp/logs.txt';
-        fs.appendFileSync(logsPath, texto + '\n', { encoding: 'utf8' });
-      } catch (err2) {
-        try {
-          // fallback extra: /var/tmp (em algumas builds)
-          logsPath = '/var/tmp/logs.txt';
-          fs.appendFileSync(logsPath, texto + '\n', { encoding: 'utf8' });
-        } catch (err3) {
-          console.error('❌ Falha ao gravar log em qualquer diretório:', err3);
-          return;
-        }
-      }
-    }
-
-    console.log('📂 Caminho de gravação:', logsPath);
-    console.log('✅ Log gravado:', texto);
+    console.log('✅ Log recebido:', texto);
+    await atualizarGist(texto);
   } catch (err) {
     console.error('Erro ao processar mensagem de log:', err);
   }
 });
 
+// --- Inicialização ---
 client.once('ready', async () => {
   console.log(`🤖 Bot online como ${client.user.tag}`);
   await registrarComandos();
 });
 
-// Servidor Express para manter ativo no Render
+// --- Servidor Express (Render keep-alive) ---
 const express = require('express');
 const app = express();
 app.get('/', (req, res) => res.send('Bot online!'));
 app.listen(3000, () => console.log('🌐 Servidor Express ativo'));
 
-// Ping preventivo para evitar hibernação
+// --- Auto-ping ---
 const pingTimer = require('node-cron');
-const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 pingTimer.schedule('*/5 * * * *', () => {
   fetch('https://controle-ponto-bot.onrender.com').catch(() => {});
 });
