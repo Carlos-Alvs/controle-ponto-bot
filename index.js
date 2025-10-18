@@ -181,6 +181,7 @@ pingTimer.schedule('*/5 * * * *', () => {
   fetch('https://controle-ponto-bot.onrender.com').catch(() => {});
 });
 
-
-
 client.login(TOKEN);
+
+console.log('Caminho atual:', process.cwd());
+console.log('Tentando gravar em:', logsPath);
