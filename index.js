@@ -17,6 +17,66 @@ const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GIST_ID = process.env.GIST_ID;
 const META_SEMANAL = 7; // horas
 
+// --- TESTE AUTOMÁTICO DE TOKEN/GIST NO RENDER ---
+async function testarTokenRender() {
+  const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+  const TOKEN = process.env.GITHUB_TOKEN;
+  const GIST_ID = process.env.GIST_ID;
+
+  if (!TOKEN || !GIST_ID) {
+    console.error('⚠️ GITHUB_TOKEN ou GIST_ID não definidos — teste ignorado.');
+    return;
+  }
+
+  try {
+    console.log('🔍 Testando token de acesso (Render)...');
+
+    const resp = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        'User-Agent': 'controle-ponto-bot'
+      },
+    });
+
+    if (!resp.ok) {
+      console.error(`❌ Falha ao ler Gist (${resp.status}):`, await resp.text());
+      return;
+    }
+
+    const gist = await resp.json();
+    console.log('✅ Gist acessado com sucesso! Arquivos:', Object.keys(gist.files));
+
+    // Teste de escrita (acrescenta uma linha de status)
+    const linhaTeste = `Teste Render OK em ${new Date().toLocaleString('pt-BR')}`;
+    const novoConteudo = (gist.files['logs.txt']?.content || '') + '\n' + linhaTeste;
+
+    const patchResp = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'controle-ponto-bot'
+      },
+      body: JSON.stringify({
+        files: { 'logs.txt': { content: novoConteudo } }
+      }),
+    });
+
+    if (!patchResp.ok) {
+      console.error(`❌ Falha ao atualizar Gist (${patchResp.status}):`, await patchResp.text());
+    } else {
+      console.log('☁️ Teste Render OK: Gist atualizado com sucesso.');
+    }
+  } catch (err) {
+    console.error('❌ Erro ao testar token no Render:', err);
+  }
+}
+
+// Executa o teste uma vez no início
+testarTokenRender();
+
+
+
 // ---------------- GIST ----------------
 async function obterLogsDoGist() {
   try {
