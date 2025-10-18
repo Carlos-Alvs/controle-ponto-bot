@@ -1,8 +1,7 @@
-const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
-const cron = require('node-cron');
-const fs = require('fs');
-const path = require('path');
 require('dotenv').config();
+
+// --- Dependência dinâmica (para fetch) ---
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
 // --- Configurações principais ---
 const client = new Client({
@@ -22,16 +21,51 @@ const META_SEMANAL = 7; // Meta semanal em horas
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GIST_ID = process.env.GIST_ID;
 
-// --- Dependência dinâmica ---
-const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
-
 // --- Utilitário ---
 function timeToMinutes(timeStr) {
   const [h, m, s] = timeStr.split(':').map(Number);
   return (h || 0) * 60 + (m || 0) + ((s || 0) / 60);
 }
 
-// --- Cálculo das horas semanais ---
+// --- Funções Gist ---
+async function obterLogsDoGist() {
+  try {
+    const resp = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+      headers: { Authorization: `Bearer ${GITHUB_TOKEN}` }
+    });
+    const data = await resp.json();
+    const conteudo = data.files['logs.txt']?.content || '';
+    return conteudo.split('\n').filter(Boolean);
+  } catch (err) {
+    console.error('⚠️ Erro ao ler Gist:', err);
+    return [];
+  }
+}
+
+async function atualizarGist(novaLinha) {
+  try {
+    const logs = await obterLogsDoGist();
+    const atualizado = [...logs, novaLinha].join('\n');
+
+    const resp = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${GITHUB_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        files: { 'logs.txt': { content: atualizado } }
+      })
+    });
+
+    if (resp.ok) console.log('☁️ Log atualizado no Gist:', novaLinha);
+    else console.error('❌ Falha ao atualizar Gist:', await resp.text());
+  } catch (err) {
+    console.error('❌ Erro ao atualizar Gist:', err);
+  }
+}
+
+// --- Cálculo das horas ---
 function calcularHorasSemanais(logs, dataInicio, dataFim) {
   const usuarios = {};
 
@@ -94,44 +128,7 @@ function calcularHorasSemanais(logs, dataInicio, dataFim) {
   return [`Relatório de metas semana do dia ${inicioFormatado} a ${fimFormatado}`, ...resultados].join('\n');
 }
 
-// --- Leitura de logs (Gist) ---
-async function obterLogsDoGist() {
-  try {
-    const resp = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
-      headers: { Authorization: `Bearer ${GITHUB_TOKEN}` }
-    });
-    const data = await resp.json();
-    return data.files['logs.txt']?.content?.split('\n').filter(Boolean) || [];
-  } catch (err) {
-    console.error('⚠️ Falha ao ler Gist:', err);
-    return [];
-  }
-}
-
-// --- Atualização do Gist ---
-async function atualizarGist(novaLinha) {
-  try {
-    const atual = await obterLogsDoGist();
-    const atualizado = [...atual, novaLinha].join('\n');
-
-    await fetch(`https://api.github.com/gists/${GIST_ID}`, {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${GITHUB_TOKEN}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        files: { 'logs.txt': { content: atualizado } }
-      })
-    });
-
-    console.log('☁️ Log sincronizado no Gist:', novaLinha);
-  } catch (err) {
-    console.error('❌ Erro ao atualizar Gist:', err);
-  }
-}
-
-// --- Geração de relatório ---
+// --- Gera relatório ---
 async function gerarRelatorio(channel) {
   const conteudo = await obterLogsDoGist();
   if (!conteudo.length) return channel.send('❌ Nenhum log encontrado no Gist.');
@@ -145,9 +142,9 @@ async function gerarRelatorio(channel) {
   await channel.send('```' + relatorio + '```');
 }
 
-// --- Slash Command ---
+// --- Slash Command /relatorio ---
 const commands = [{ name: 'relatorio', description: 'Gera manualmente o relatório semanal de metas.' }];
-const rest = new REST({ version: '10' }).setToken(TOKEN);
+const rest = new (require('@discordjs/rest').REST)({ version: '10' }).setToken(TOKEN);
 
 async function registrarComandos() {
   try {
@@ -168,13 +165,12 @@ cron.schedule('0 23 * * 6', async () => {
   }
 });
 
-// --- Comando manual /relatorio ---
+// --- /relatorio (interação manual) ---
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isCommand()) return;
   if (interaction.commandName === 'relatorio') {
     try {
-      await interaction.deferReply({ ephemeral: false });
-      const channel = await client.channels.fetch(CHANNEL_ID_REPORT);
+      await interaction.deferReply(); // sem 'ephemeral'
       const conteudo = await obterLogsDoGist();
 
       if (!conteudo.length) {
@@ -199,7 +195,7 @@ client.on('interactionCreate', async (interaction) => {
   }
 });
 
-// --- Recebe logs do canal e envia pro Gist ---
+// --- Captura e sincroniza logs ---
 client.on('messageCreate', async (msg) => {
   try {
     if (msg.author?.bot) return;
@@ -209,7 +205,7 @@ client.on('messageCreate', async (msg) => {
     const regex = /🕘 (.+) \((\d+)\) => Data: (\d{1,2}\/\d{1,2}\/\d{4}) \| (ENTRADA|SAIDA): (\d{1,2}:\d{1,2}:\d{1,2})/;
     if (!regex.test(texto)) return;
 
-    console.log('✅ Log recebido:', texto);
+    console.log('🕘 Log capturado:', texto);
     await atualizarGist(texto);
   } catch (err) {
     console.error('Erro ao processar mensagem de log:', err);
@@ -229,8 +225,7 @@ app.get('/', (req, res) => res.send('Bot online!'));
 app.listen(3000, () => console.log('🌐 Servidor Express ativo'));
 
 // --- Auto-ping ---
-const pingTimer = require('node-cron');
-pingTimer.schedule('*/5 * * * *', () => {
+cron.schedule('*/5 * * * *', () => {
   fetch('https://controle-ponto-bot.onrender.com').catch(() => {});
 });
 
