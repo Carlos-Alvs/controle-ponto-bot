@@ -242,17 +242,25 @@ client.on('interactionCreate', async (interaction) => {
 
 client.on('messageCreate', async (msg) => {
   try {
-    if (msg.author?.bot) return;
+    // Ignora mensagens do próprio bot
+    if (msg.author?.id === client.user.id) return;
+
+    // Permite mensagens de outros bots (ex: Cidade Alta APP)
+    // ⚠️ Se quiser limitar a um bot específico, use:
+    if (msg.author.id !== '974026891067531305') return;
+
     if (!CHANNEL_ID_RECEIVE || msg.channel.id !== CHANNEL_ID_RECEIVE) return;
 
     const texto = msg.content.trim();
-    const regex = /🕘 (.+) \((\d+)\) => Data: (\d{1,2}\/\d{1,2}\/\d{4}) \| (ENTRADA|SAIDA): (\d{1,2}:\d{1,2}:\d{1,2})/;
+    const regex =
+      /🕘 (.+) \((\d+)\) => Data: (\d{1,2}\/\d{1,2}\/\d{4}) \| (ENTRADA|SAIDA): (\d{1,2}:\d{1,2}:\d{1,2})/;
     if (!regex.test(texto)) return;
 
     console.log('🕘 Log capturado:', texto);
     await atualizarGist(texto);
+
   } catch (err) {
-    console.error('Erro ao processar mensagem:', err);
+    console.error('Erro ao processar mensagem de log:', err);
   }
 });
 
