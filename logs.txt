@@ -94,3 +94,7 @@
 🕘 Carlinhos Goodman (6581) => Data: 17/10/2025 | ENTRADA: 22:47:24
 🕘 Zinthos Caver (5783) => Data: 17/10/2025 | SAIDA: 22:57:51
 🕘 Carlinhos Goodman (6581) => Data: 17/10/2025 | SAIDA: 22:58:25
+🕘 Zinthos Caver (5783) => Data: 17/10/2025 | ENTRADA: 23:0:19
+🕘 Carlinhos Goodman (6581) => Data: 17/10/2025 | ENTRADA: 23:15:15
+🕘 Carlinhos Goodman (6581) => Data: 17/10/2025 | SAIDA: 23:15:31
+🕘 Carlinhos Goodman (6581) => Data: 17/10/2025 | ENTRADA: 23:15:38

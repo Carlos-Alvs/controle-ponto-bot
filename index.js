@@ -1,3 +1,5 @@
+const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
+const cron = require('node-cron');
 require('dotenv').config();
 
 // --- Dependência dinâmica (para fetch) ---
