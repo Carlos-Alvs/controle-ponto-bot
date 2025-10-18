@@ -138,7 +138,8 @@ cron.schedule('0 23 * * 6', async () => {
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isCommand()) return;
   if (interaction.commandName === 'relatorio') {
-    await interaction.reply('🕒 Gerando relatório, aguarde...');
+    await interaction.deferReply();
+    await interaction.editReply('🕒 Gerando relatório, aguarde...');
     const channel = await client.channels.fetch(CHANNEL_ID_REPORT);
     await gerarRelatorio(channel);
   }
