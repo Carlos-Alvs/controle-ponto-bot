@@ -2,16 +2,10 @@ const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
 const cron = require('node-cron');
 require('dotenv').config();
 
-// --- Dependência dinâmica (para fetch) ---
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
-// --- Configurações principais ---
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
 
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -19,22 +13,20 @@ const CHANNEL_ID_RECEIVE = process.env.CHANNEL_ID_RECEIVE;
 const CHANNEL_ID_REPORT = process.env.CHANNEL_ID_REPORT;
 const GUILD_ID = process.env.DISCORD_GUILD_ID;
 const CLIENT_ID = process.env.CLIENT_ID;
-const META_SEMANAL = 7; // Meta semanal em horas
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GIST_ID = process.env.GIST_ID;
+const META_SEMANAL = 7; // horas
 
-// --- Utilitário ---
-function timeToMinutes(timeStr) {
-  const [h, m, s] = timeStr.split(':').map(Number);
-  return (h || 0) * 60 + (m || 0) + ((s || 0) / 60);
-}
-
-// --- Funções Gist ---
+// ---------------- GIST ----------------
 async function obterLogsDoGist() {
   try {
     const resp = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
-      headers: { Authorization: `Bearer ${GITHUB_TOKEN}` }
+      headers: { Authorization: `Bearer ${GITHUB_TOKEN}` },
     });
+    if (!resp.ok) {
+      console.error('❌ Falha ao ler Gist:', resp.status, await resp.text());
+      return [];
+    }
     const data = await resp.json();
     const conteudo = data.files['logs.txt']?.content || '';
     return conteudo.split('\n').filter(Boolean);
@@ -44,160 +36,150 @@ async function obterLogsDoGist() {
   }
 }
 
-async function atualizarGist(novaLinha) {
+async function atualizarGist(linha) {
   try {
-    const logs = await obterLogsDoGist();
-    const atualizado = [...logs, novaLinha].join('\n');
+    const logsAtuais = await obterLogsDoGist();
+    const novoConteudo = [...logsAtuais, linha].join('\n');
 
     const resp = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
       method: 'PATCH',
       headers: {
         Authorization: `Bearer ${GITHUB_TOKEN}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        files: { 'logs.txt': { content: atualizado } }
-      })
+      body: JSON.stringify({ files: { 'logs.txt': { content: novoConteudo } } }),
     });
 
-    if (resp.ok) console.log('☁️ Log atualizado no Gist:', novaLinha);
-    else console.error('❌ Falha ao atualizar Gist:', await resp.text());
+    if (!resp.ok) {
+      console.error('❌ Falha ao atualizar Gist:', resp.status, await resp.text());
+    } else {
+      console.log('☁️ Gist atualizado:', linha);
+    }
   } catch (err) {
     console.error('❌ Erro ao atualizar Gist:', err);
   }
 }
 
-// --- Cálculo das horas ---
-function calcularHorasSemanais(logs, dataInicio, dataFim) {
+// ---------------- CÁLCULO ----------------
+function timeToMinutes(timeStr) {
+  const [h, m, s] = timeStr.split(':').map(Number);
+  return (h || 0) * 60 + (m || 0) + ((s || 0) / 60);
+}
+
+function calcularHorasSemanais(logs, inicio, fim) {
   const usuarios = {};
 
-  logs.forEach((log) => {
-    const match = log.match(/🕘 (.+) \((\d+)\) => Data: (\d{1,2}\/\d{1,2}\/\d{4}) \| (ENTRADA|SAIDA): (\d{1,2}:\d{1,2}:\d{1,2})/);
+  // Agrupa por usuário e por data
+  logs.forEach((linha) => {
+    const match = linha.match(/🕘 (.+) \((\d+)\) => Data: (\d{1,2}\/\d{1,2}\/\d{4}) \| (ENTRADA|SAIDA): (\d{1,2}:\d{1,2}:\d{1,2})/);
     if (!match) return;
-
     const [, nome, id, data, tipo, hora] = match;
-    const key = `${nome}|${id}`;
-    if (!usuarios[key]) usuarios[key] = [];
-    usuarios[key].push({ data, tipo, hora });
+    const chave = `${nome}|${id}`;
+    if (!usuarios[chave]) usuarios[chave] = {};
+    if (!usuarios[chave][data]) usuarios[chave][data] = [];
+    usuarios[chave][data].push({ tipo, hora });
   });
 
   const resultados = [];
   const agora = new Date();
 
-  for (const key in usuarios) {
-    const [nome, id] = key.split('|');
-    const registros = usuarios[key].sort(
-      (a, b) =>
-        new Date(a.data.split('/').reverse().join('-')) - new Date(b.data.split('/').reverse().join('-')) ||
-        timeToMinutes(a.hora) - timeToMinutes(b.hora)
-    );
-
+  for (const chave in usuarios) {
+    const [nome, id] = chave.split('|');
     let totalMinutos = 0;
     let emServico = false;
 
-    for (let i = 0; i < registros.length; i++) {
-      const atual = registros[i];
-      const proximo = registros[i + 1];
+    for (const data in usuarios[chave]) {
+      const registros = usuarios[chave][data].sort((a, b) => timeToMinutes(a.hora) - timeToMinutes(b.hora));
 
-      if (atual.tipo === 'ENTRADA') {
-        let entrada = timeToMinutes(atual.hora);
-        let saida;
+      for (let i = 0; i < registros.length; i++) {
+        if (registros[i].tipo === 'ENTRADA') {
+          const entrada = timeToMinutes(registros[i].hora);
+          const proximo = registros[i + 1];
+          let saida;
 
-        if (proximo && proximo.tipo === 'SAIDA') {
-          saida = timeToMinutes(proximo.hora);
-          i++;
-        } else {
-          const horaAgora = agora.getHours().toString().padStart(2, '0') + ':' +
-            agora.getMinutes().toString().padStart(2, '0') + ':' +
-            agora.getSeconds().toString().padStart(2, '0');
-          saida = timeToMinutes(horaAgora);
-          emServico = true;
+          if (proximo && proximo.tipo === 'SAIDA') {
+            saida = timeToMinutes(proximo.hora);
+            i++;
+          } else {
+            const horaAgora = agora.getHours().toString().padStart(2, '0') + ':' +
+              agora.getMinutes().toString().padStart(2, '0') + ':' +
+              agora.getSeconds().toString().padStart(2, '0');
+            saida = timeToMinutes(horaAgora);
+            emServico = true;
+          }
+
+          if (saida < entrada) saida += 24 * 60;
+          totalMinutos += saida - entrada;
         }
-
-        if (saida < entrada) saida += 24 * 60;
-        totalMinutos += saida - entrada;
       }
     }
 
     const horas = (totalMinutos / 60).toFixed(2);
     const metaCumprida = horas >= META_SEMANAL ? '✅ Meta cumprida' : '❌ Meta não atingida';
-    const observacao = emServico ? ' (Em serviço)' : '';
-    resultados.push(`${nome} | ${id} trabalhou ${horas}h nos últimos 7 dias. ${metaCumprida}${observacao}`);
+    resultados.push(`${nome} | ${id} trabalhou ${horas}h nos últimos 7 dias. ${metaCumprida}${emServico ? ' (Em serviço)' : ''}`);
   }
 
-  const inicioFormatado = dataInicio.toLocaleDateString('pt-BR');
-  const fimFormatado = dataFim.toLocaleDateString('pt-BR');
-  return [`Relatório de metas semana do dia ${inicioFormatado} a ${fimFormatado}`, ...resultados].join('\n');
+  const inicioF = inicio.toLocaleDateString('pt-BR');
+  const fimF = fim.toLocaleDateString('pt-BR');
+  return [`Relatório de metas semana do dia ${inicioF} a ${fimF}`, ...resultados].join('\n');
 }
 
-// --- Gera relatório ---
+// ---------------- RELATÓRIO ----------------
 async function gerarRelatorio(channel) {
-  const conteudo = await obterLogsDoGist();
-  if (!conteudo.length) return channel.send('❌ Nenhum log encontrado no Gist.');
+  const logs = await obterLogsDoGist();
+  if (!logs.length) return channel.send('❌ Nenhum log encontrado no Gist.');
 
   const agora = new Date();
-  const dataFim = agora;
-  const dataInicio = new Date();
-  dataInicio.setDate(dataFim.getDate() - 7);
+  const fim = agora;
+  const inicio = new Date();
+  inicio.setDate(fim.getDate() - 7);
 
-  const relatorio = calcularHorasSemanais(conteudo, dataInicio, dataFim);
+  const relatorio = calcularHorasSemanais(logs, inicio, fim);
   await channel.send('```' + relatorio + '```');
 }
 
-// --- Slash Command /relatorio ---
-const commands = [{ name: 'relatorio', description: 'Gera manualmente o relatório semanal de metas.' }];
+// ---------------- COMANDOS ----------------
 const rest = new (require('@discordjs/rest').REST)({ version: '10' }).setToken(TOKEN);
+const commands = [{ name: 'relatorio', description: 'Gera manualmente o relatório semanal de metas.' }];
 
 async function registrarComandos() {
   try {
     await rest.put(Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID), { body: commands });
     console.log('✅ Comando /relatorio registrado.');
-  } catch (error) {
-    console.error('Erro ao registrar comandos:', error);
+  } catch (err) {
+    console.error('Erro ao registrar comandos:', err);
   }
 }
 
-// --- Cron semanal (sábado 23h) ---
-cron.schedule('0 23 * * 6', async () => {
-  try {
-    const channel = await client.channels.fetch(CHANNEL_ID_REPORT);
-    await gerarRelatorio(channel);
-  } catch (err) {
-    console.error('[CRON ERROR]', err);
-  }
-});
-
-// --- /relatorio (interação manual) ---
+// ---------------- LISTENERS ----------------
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isCommand()) return;
-  if (interaction.commandName === 'relatorio') {
-    try {
-      await interaction.deferReply(); // sem 'ephemeral'
-      const conteudo = await obterLogsDoGist();
+  if (interaction.commandName !== 'relatorio') return;
 
-      if (!conteudo.length) {
-        await interaction.editReply('❌ Nenhum log encontrado no Gist.');
-        return;
-      }
-
-      const agora = new Date();
-      const dataFim = agora;
-      const dataInicio = new Date();
-      dataInicio.setDate(dataFim.getDate() - 7);
-
-      const relatorio = calcularHorasSemanais(conteudo, dataInicio, dataFim);
-      await interaction.editReply('```' + relatorio + '```');
-    } catch (err) {
-      console.error('Erro ao gerar relatório:', err);
-      if (interaction.deferred || interaction.replied)
-        await interaction.editReply('❌ Ocorreu um erro ao gerar o relatório.');
-      else
-        await interaction.reply('❌ Ocorreu um erro ao gerar o relatório.');
+  try {
+    await interaction.deferReply();
+    const logs = await obterLogsDoGist();
+    if (!logs.length) {
+      await interaction.editReply('❌ Nenhum log encontrado no Gist.');
+      return;
     }
+
+    const agora = new Date();
+    const fim = agora;
+    const inicio = new Date();
+    inicio.setDate(fim.getDate() - 7);
+
+    const relatorio = calcularHorasSemanais(logs, inicio, fim);
+    await interaction.editReply('```' + relatorio + '```');
+  } catch (err) {
+    console.error('Erro ao gerar relatório:', err);
+    try {
+      if (interaction.deferred || interaction.replied)
+        await interaction.editReply('❌ Erro ao gerar o relatório.');
+    } catch {}
   }
 });
 
-// --- Captura e sincroniza logs ---
 client.on('messageCreate', async (msg) => {
   try {
     if (msg.author?.bot) return;
@@ -210,23 +192,32 @@ client.on('messageCreate', async (msg) => {
     console.log('🕘 Log capturado:', texto);
     await atualizarGist(texto);
   } catch (err) {
-    console.error('Erro ao processar mensagem de log:', err);
+    console.error('Erro ao processar mensagem:', err);
   }
 });
 
-// --- Inicialização ---
+// ---------------- AGENDAMENTO ----------------
+cron.schedule('0 23 * * 6', async () => {
+  try {
+    const canal = await client.channels.fetch(CHANNEL_ID_REPORT);
+    await gerarRelatorio(canal);
+  } catch (err) {
+    console.error('[CRON ERROR]', err);
+  }
+});
+
+// ---------------- BOOT ----------------
 client.once('ready', async () => {
   console.log(`🤖 Bot online como ${client.user.tag}`);
   await registrarComandos();
 });
 
-// --- Servidor Express (Render keep-alive) ---
+// ---------------- EXPRESS KEEP-ALIVE ----------------
 const express = require('express');
 const app = express();
 app.get('/', (req, res) => res.send('Bot online!'));
 app.listen(3000, () => console.log('🌐 Servidor Express ativo'));
 
-// --- Auto-ping ---
 cron.schedule('*/5 * * * *', () => {
   fetch('https://controle-ponto-bot.onrender.com').catch(() => {});
 });
