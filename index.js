@@ -247,7 +247,7 @@ client.on('messageCreate', async (msg) => {
 
     // Permite mensagens de outros bots (ex: Cidade Alta APP)
     // ⚠️ Se quiser limitar a um bot específico, use:
-    if (msg.author.id !== '974026891067531305') return;
+    //if (msg.author.id !== '974026891067531305') return;
 
     if (!CHANNEL_ID_RECEIVE || msg.channel.id !== CHANNEL_ID_RECEIVE) return;
 
