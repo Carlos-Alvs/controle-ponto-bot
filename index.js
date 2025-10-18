@@ -146,18 +146,46 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // Recebe logs do canal
+// Recebe logs do canal
 client.on('messageCreate', async (msg) => {
   try {
+    // ignora bots (inclusive o próprio)
     if (msg.author?.bot) return;
+
+    // filtra apenas o canal de logs
     if (!CHANNEL_ID_RECEIVE || msg.channel.id !== CHANNEL_ID_RECEIVE) return;
 
     const texto = msg.content.trim();
-    const regex = /🕘 (.+) \((\d+)\) => Data: (\d{1,2}\/\d{1,2}\/\d{4}) \| (ENTRADA|SAIDA): (\d{1,2}:\d{1,2}:\d{1,2})/;
+
+    // valida o formato antes de gravar (evita lixo no arquivo)
+    const regex =
+      /🕘 (.+) \((\d+)\) => Data: (\d{1,2}\/\d{1,2}\/\d{4}) \| (ENTRADA|SAIDA): (\d{1,2}:\d{1,2}:\d{1,2})/;
     if (!regex.test(texto)) return;
 
-    const logsPath = path.join(process.cwd(), 'logs.txt');
-    fs.appendFileSync(logsPath, texto + '\n', { encoding: 'utf8' });
-    console.log('Log gravado:', texto);
+    // 🧩 caminho compatível com Render e local
+    let logsPath = path.join(process.cwd(), 'logs.txt'); // padrão local
+    try {
+      // tenta gravar no diretório padrão (Render pode travar)
+      fs.appendFileSync(logsPath, texto + '\n', { encoding: 'utf8' });
+    } catch (err1) {
+      try {
+        // fallback: /tmp (Render Free Tier grava aqui)
+        logsPath = '/tmp/logs.txt';
+        fs.appendFileSync(logsPath, texto + '\n', { encoding: 'utf8' });
+      } catch (err2) {
+        try {
+          // fallback extra: /var/tmp (em algumas builds)
+          logsPath = '/var/tmp/logs.txt';
+          fs.appendFileSync(logsPath, texto + '\n', { encoding: 'utf8' });
+        } catch (err3) {
+          console.error('❌ Falha ao gravar log em qualquer diretório:', err3);
+          return;
+        }
+      }
+    }
+
+    console.log('📂 Caminho de gravação:', logsPath);
+    console.log('✅ Log gravado:', texto);
   } catch (err) {
     console.error('Erro ao processar mensagem de log:', err);
   }
@@ -182,6 +210,3 @@ pingTimer.schedule('*/5 * * * *', () => {
 });
 
 client.login(TOKEN);
-
-console.log('Caminho atual:', process.cwd());
-console.log('Tentando gravar em:', logsPath);
