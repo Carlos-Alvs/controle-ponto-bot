@@ -178,7 +178,7 @@ const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fet
 pingTimer.schedule('*/5 * * * *', () => {
   fetch('https://controle-ponto-bot.onrender.com').catch(() => {});
 
-
+});
 
 
 client.login(TOKEN);
